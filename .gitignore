@@ -1,0 +1,8 @@
+# sekrety – token LocalStack
+.env
+# dane robocze LocalStack
+volume/
+# artefakty budowania Lambdy
+lambda/*.zip
+__pycache__/
+*.pyc

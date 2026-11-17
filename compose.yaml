@@ -1,0 +1,21 @@
+# Lab 2 – LocalStack (S3 + Lambda) uruchamiany przez Docker Compose
+services:
+  localstack:
+    container_name: "${LOCALSTACK_DOCKER_NAME:-localstack-main}"
+    image: localstack/localstack:latest
+    ports:
+      # porty wystawione TYLKO lokalnie (127.0.0.1), nie na całą sieć
+      - "127.0.0.1:4566:4566"            # LocalStack Gateway
+      - "127.0.0.1:4510-4559:4510-4559"  # zakres portów usług zewnętrznych
+    environment:
+      # token czytany z lokalnego pliku .env (plik jest w .gitignore)
+      - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN:?Ustaw LOCALSTACK_AUTH_TOKEN w pliku .env}
+      - SERVICES=s3,lambda,iam,sts,logs
+      - DEBUG=${DEBUG:-0}
+      - PERSISTENCE=${PERSISTENCE:-0}
+      # Lambda uruchamia każdą funkcję w osobnym kontenerze Dockera
+      - LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT=60
+    volumes:
+      - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
+      # gniazdo Dockera – WYMAGANE, żeby LocalStack mógł uruchamiać kontenery Lambda
+      - "/var/run/docker.sock:/var/run/docker.sock"

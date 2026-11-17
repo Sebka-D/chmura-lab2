@@ -1,0 +1,298 @@
+Lab 2 – polecenia wykonane w konsoli (lstk / AWS CLI / docker compose)
+Data: 2026-11-17 09:25
+
+######## 1. Środowisko ########
+
+$ docker compose up -d
+ Container localstack-main Running 
+
+$ docker compose ps
+NAME              IMAGE                          COMMAND                  SERVICE      CREATED          STATUS                    PORTS
+localstack-main   localstack/localstack:latest   "docker-entrypoint.sh"   localstack   31 seconds ago   Up 30 seconds (healthy)   127.0.0.1:4510-4559->4510-4559/tcp, 127.0.0.1:4566->4566/tcp
+
+$ lstk --version
+lstk 1.4.5
+
+$ lstk status
+Fetching LocalStack status...
+✔︎ LocalStack AWS Emulator is running
+• Endpoint: localhost.localstack.cloud:4566
+• Container: localstack-main
+• Version: 2026.10.7
+• Uptime: 31s
+> Note: No resources deployed
+
+$ lstk aws sts get-caller-identity
+> Note: No AWS profile found, run 'lstk setup aws'
+{
+    "UserId": "000000000000",
+    "Account": "000000000000",
+    "Arn": "arn:aws:iam::000000000000:root"
+}
+
+######## 2. S3 – statyczna strona ########
+
+$ lstk aws s3 mb s3://raport-koszykow-www
+> Note: No AWS profile found, run 'lstk setup aws'
+make_bucket: raport-koszykow-www
+
+$ lstk aws s3 cp www/index.html s3://raport-koszykow-www/index.html --content-type "text/html; charset=utf-8"
+> Note: No AWS profile found, run 'lstk setup aws'
+Completed 550 Bytes/550 Bytes (7.0 KiB/s) with 1 file(s) remainingupload: www\index.html to s3://raport-koszykow-www/index.html     
+
+$ lstk aws s3 cp www/style.css s3://raport-koszykow-www/style.css --content-type "text/css; charset=utf-8"
+> Note: No AWS profile found, run 'lstk setup aws'
+Completed 696 Bytes/696 Bytes (79.6 KiB/s) with 1 file(s) remainingupload: www\style.css to s3://raport-koszykow-www/style.css        
+
+$ lstk aws s3 website s3://raport-koszykow-www --index-document index.html
+> Note: No AWS profile found, run 'lstk setup aws'
+
+$ lstk aws s3api delete-public-access-block --bucket raport-koszykow-www
+> Note: No AWS profile found, run 'lstk setup aws'
+
+$ lstk aws s3api put-bucket-policy --bucket raport-koszykow-www --policy file://www/bucket-policy.json
+> Note: No AWS profile found, run 'lstk setup aws'
+
+$ lstk aws s3api get-bucket-website --bucket raport-koszykow-www
+> Note: No AWS profile found, run 'lstk setup aws'
+{
+    "IndexDocument": {
+        "Suffix": "index.html"
+    }
+}
+
+$ lstk aws s3 ls s3://raport-koszykow-www
+> Note: No AWS profile found, run 'lstk setup aws'
+2026-11-17 09:25:18        550 index.html
+2026-11-17 09:25:19        696 style.css
+
+$ curl -s -i http://raport-koszykow-www.s3-website.localhost.localstack.cloud:4566/
+HTTP/1.1 200 OK
+Server: TwistedWeb/26.10.0
+Date: Tue, 17 Nov 2026 07:25:22 GMT
+Content-Type: text/html; charset=utf-8
+etag: "8acd0b13e6ab5dc40aa3ade275423f63"
+x-localstack: 2026.10.7
+Transfer-Encoding: chunked
+
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Raport koszyków</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="karta">
+    <h1>Raport koszyków</h1>
+    <p class="opis">Zestawienie porzuconych i opłaconych koszyków w sklepie internetowym.</p>
+    <p id="zdanie">Dane pochodzą z ostatnich 7 dni.</p>
+    <p class="stopka">Wersja statyczna – plik serwowany bezpośrednio z S3 Website.</p>
+  </main>
+</body>
+</html>
+
+$ curl -s -I http://raport-koszykow-www.s3-website.localhost.localstack.cloud:4566/style.css
+HTTP/1.1 405 METHOD NOT ALLOWED
+Server: TwistedWeb/26.10.0
+Date: Tue, 17 Nov 2026 07:25:22 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 442
+x-localstack: 2026.10.7
+
+
+$ curl -s -o /dev/null -w 'HTTP %{http_code}  Content-Type: %{content_type}\n' http://raport-koszykow-www.s3-website.localhost.localstack.cloud:4566/style.css
+HTTP 200  Content-Type: text/css; charset=utf-8
+
+######## 2b. Zmiana jednego zdania w HTML i ponowne przesłanie ########
+
+$ grep -n zdanie www/index.html
+13:    <p id="zdanie">ZMIANA PO PUBLIKACJI: dane pochodzą z ostatnich 30 dni.</p>
+
+$ lstk aws s3 cp www/index.html s3://raport-koszykow-www/index.html --content-type "text/html; charset=utf-8"
+> Note: No AWS profile found, run 'lstk setup aws'
+Completed 573 Bytes/573 Bytes (9.3 KiB/s) with 1 file(s) remainingupload: www\index.html to s3://raport-koszykow-www/index.html     
+
+$ curl -s http://raport-koszykow-www.s3-website.localhost.localstack.cloud:4566/ | grep zdanie
+    <p id="zdanie">ZMIANA PO PUBLIKACJI: dane pochodzą z ostatnich 30 dni.</p>
+
+######## 3. Lambda – szablon w osobnym buckecie (domyślne, prywatne ustawienia) ########
+
+$ lstk aws s3 mb s3://raport-koszykow-szablony
+> Note: No AWS profile found, run 'lstk setup aws'
+make_bucket: raport-koszykow-szablony
+
+$ lstk aws s3 cp lambda/template.html s3://raport-koszykow-szablony/template.html --content-type "text/html; charset=utf-8"
+> Note: No AWS profile found, run 'lstk setup aws'
+Completed 1022 Bytes/1022 Bytes (23.1 KiB/s) with 1 file(s) remainingupload: lambda\template.html to s3://raport-koszykow-szablony/template.html
+
+$ lstk aws s3api get-public-access-block --bucket raport-koszykow-szablony
+> Note: No AWS profile found, run 'lstk setup aws'
+{
+    "PublicAccessBlockConfiguration": {
+        "BlockPublicAcls": true,
+        "IgnorePublicAcls": true,
+        "BlockPublicPolicy": true,
+        "RestrictPublicBuckets": true
+    }
+}
+
+######## 3b. Paczka wdrożeniowa (tylko kod funkcji) i wdrożenie ########
+
+$ cd lambda && powershell -NoProfile -Command "Compress-Archive -Path handler.py -DestinationPath function.zip -Force" && cd ..
+
+$ unzip -l lambda/function.zip 2>/dev/null || powershell -NoProfile -Command "Add-Type -A System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::OpenRead('lambda/function.zip').Entries.FullName"
+Archive:  lambda/function.zip
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+     1468  2026-11-17 09:13   handler.py
+---------                     -------
+     1468                     1 file
+
+$ lstk aws iam create-role --role-name raport-koszykow-lambda-role --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}' --query Role.Arn
+> Note: No AWS profile found, run 'lstk setup aws'
+"arn:aws:iam::000000000000:role/raport-koszykow-lambda-role"
+
+$ lstk aws lambda create-function --function-name raport-koszykow-lambda --runtime python3.12 --handler handler.lambda_handler --zip-file fileb://lambda/function.zip --role arn:aws:iam::000000000000:role/raport-koszykow-lambda-role --timeout 15 --environment 'Variables={TEMPLATE_BUCKET=raport-koszykow-szablony,TEMPLATE_KEY=template.html}' --query '{Name:FunctionName,Runtime:Runtime,State:State}'
+> Note: No AWS profile found, run 'lstk setup aws'
+{
+    "Name": "raport-koszykow-lambda",
+    "Runtime": "python3.12",
+    "State": "Pending"
+}
+
+$ lstk aws lambda wait function-active-v2 --function-name raport-koszykow-lambda
+> Note: No AWS profile found, run 'lstk setup aws'
+
+$ lstk aws lambda create-function-url-config --function-name raport-koszykow-lambda --auth-type NONE
+> Note: No AWS profile found, run 'lstk setup aws'
+{
+    "FunctionUrl": "http://mu07jb9f1y2j21plxx87us3ihvjzhh2d.lambda-url.us-east-1.localhost.localstack.cloud:4566/",
+    "FunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:raport-koszykow-lambda",
+    "AuthType": "NONE",
+    "CreationTime": "2026-11-17T07:27:54.021+0000"
+}
+
+$ lstk aws lambda get-function-url-config --function-name raport-koszykow-lambda --query FunctionUrl --output text
+> Note: No AWS profile found, run 'lstk setup aws'
+http://mu07jb9f1y2j21plxx87us3ihvjzhh2d.lambda-url.us-east-1.localhost.localstack.cloud:4566/
+
+######## 3c. Testy Function URL (curl) ########
+
+$ curl -s -i 'http://mu07jb9f1y2j21plxx87us3ihvjzhh2d.lambda-url.us-east-1.localhost.localstack.cloud:4566/?imie=Ola' | grep -iE '^HTTP|^content-type|<h1>'
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+    <h1>Raport dla Ola</h1>
+
+$ curl -s -i 'http://mu07jb9f1y2j21plxx87us3ihvjzhh2d.lambda-url.us-east-1.localhost.localstack.cloud:4566/?imie=Jan' | grep -iE '^HTTP|^content-type|<h1>'
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+    <h1>Raport dla Jan</h1>
+
+$ curl -s -i 'http://mu07jb9f1y2j21plxx87us3ihvjzhh2d.lambda-url.us-east-1.localhost.localstack.cloud:4566/'
+HTTP/1.1 400 BAD REQUEST
+Server: TwistedWeb/26.10.0
+Date: Tue, 17 Nov 2026 07:28:05 GMT
+Content-Type: text/plain; charset=utf-8
+Connection: keep-alive
+x-amzn-requestid: b257663d-a5ba-49ad-ab46-edc9e1c0ca94
+x-amzn-trace-id: 9a2be3e3-a7d2-4f28-b203-ab5bb788e8ea
+Content-Length: 55
+x-localstack: 2026.10.7
+
+Brak parametru imie. Dopisz go do adresu, np. ?imie=Ola
+$ curl -s -i 'http://mu07jb9f1y2j21plxx87us3ihvjzhh2d.lambda-url.us-east-1.localhost.localstack.cloud:4566/?imie='
+HTTP/1.1 400 BAD REQUEST
+Server: TwistedWeb/26.10.0
+Date: Tue, 17 Nov 2026 07:28:05 GMT
+Content-Type: text/plain; charset=utf-8
+Connection: keep-alive
+x-amzn-requestid: f3db6b59-d331-4cfd-9e79-7ca7e5924358
+x-amzn-trace-id: 7d8d3eff-81fc-4639-9baf-df5f201dc225
+Content-Length: 55
+x-localstack: 2026.10.7
+
+Brak parametru imie. Dopisz go do adresu, np. ?imie=Ola
+$ curl -s 'http://mu07jb9f1y2j21plxx87us3ihvjzhh2d.lambda-url.us-east-1.localhost.localstack.cloud:4566/?imie=%3Cb%3EOla%3C%2Fb%3E%20%26%20%22Jan%22' | grep '<h1>'
+    <h1>Raport dla &lt;b&gt;Ola&lt;/b&gt; &amp; &quot;Jan&quot;</h1>
+
+######## 3c. Testy Function URL (curl) ########
+
+$ curl -s -i 'http://mu07jb9f1y2j21plxx87us3ihvjzhh2d.lambda-url.us-east-1.localhost.localstack.cloud:4566/?imie=Ola' | grep -iE '^HTTP|^content-type|<h1>'
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+    <h1>Raport dla Ola</h1>
+
+$ curl -s -i 'http://mu07jb9f1y2j21plxx87us3ihvjzhh2d.lambda-url.us-east-1.localhost.localstack.cloud:4566/?imie=Jan' | grep -iE '^HTTP|^content-type|<h1>'
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+    <h1>Raport dla Jan</h1>
+
+$ curl -s -i 'http://mu07jb9f1y2j21plxx87us3ihvjzhh2d.lambda-url.us-east-1.localhost.localstack.cloud:4566/'
+HTTP/1.1 400 BAD REQUEST
+Server: TwistedWeb/26.10.0
+Date: Tue, 17 Nov 2026 07:34:04 GMT
+Content-Type: text/plain; charset=utf-8
+Connection: keep-alive
+x-amzn-requestid: 5bfc99bd-ec22-4ad5-a017-8b491f6b58a5
+x-amzn-trace-id: f71162a7-3593-42b1-a576-057a28110669
+Content-Length: 55
+x-localstack: 2026.10.7
+
+Brak parametru imie. Dopisz go do adresu, np. ?imie=Ola
+$ curl -s -i 'http://mu07jb9f1y2j21plxx87us3ihvjzhh2d.lambda-url.us-east-1.localhost.localstack.cloud:4566/?imie='
+HTTP/1.1 400 BAD REQUEST
+Server: TwistedWeb/26.10.0
+Date: Tue, 17 Nov 2026 07:34:04 GMT
+Content-Type: text/plain; charset=utf-8
+Connection: keep-alive
+x-amzn-requestid: 1b580846-b451-4408-9718-6335deb508bb
+x-amzn-trace-id: 93eb3626-ec15-4bb2-a890-fb68163683e1
+Content-Length: 55
+x-localstack: 2026.10.7
+
+Brak parametru imie. Dopisz go do adresu, np. ?imie=Ola
+$ curl -s 'http://mu07jb9f1y2j21plxx87us3ihvjzhh2d.lambda-url.us-east-1.localhost.localstack.cloud:4566/?imie=%3Cb%3EOla%3C%2Fb%3E%20%26%20%22Jan%22' | grep '<h1>'
+    <h1>Raport dla &lt;b&gt;Ola&lt;/b&gt; &amp; &quot;Jan&quot;</h1>
+
+######## 3d. Nowe zdanie w szablonie – ponowne przesłanie TYLKO template.html (bez wdrażania funkcji) ########
+
+$ grep -n "NOWE ZDANIE" lambda/template.html
+lambda/template.html:21:    <p class="nowe"><b>NOWE ZDANIE: szablon podmieniony w S3 bez ponownego wdrażania funkcji.</b></p>
+
+$ lstk aws s3 cp lambda/template.html s3://raport-koszykow-szablony/template.html --content-type "text/html; charset=utf-8"
+> Note: No AWS profile found, run 'lstk setup aws'
+Completed 1.1 KiB/1.1 KiB (28.5 KiB/s) with 1 file(s) remainingupload: lambda\template.html to s3://raport-koszykow-szablony/template.html
+
+$ lstk aws lambda get-function --function-name raport-koszykow-lambda --query 'Configuration.{LastModified:LastModified,CodeSha256:CodeSha256}'
+> Note: No AWS profile found, run 'lstk setup aws'
+{
+    "LastModified": "2026-11-17T07:27:27.539+0000",
+    "CodeSha256": "LCmd+BIIOiOBN82uKY1YQXgbyja+2pb3xLvbdHFlLuY="
+}
+
+$ curl -s 'http://mu07jb9f1y2j21plxx87us3ihvjzhh2d.lambda-url.us-east-1.localhost.localstack.cloud:4566/?imie=Jan' | grep -E '<h1>|NOWE'
+    <h1>Raport dla Jan</h1>
+    <p class="nowe"><b>NOWE ZDANIE: szablon podmieniony w S3 bez ponownego wdrażania funkcji.</b></p>
+
+$ curl -s 'http://mu07jb9f1y2j21plxx87us3ihvjzhh2d.lambda-url.us-east-1.localhost.localstack.cloud:4566/?imie=Ola' | grep -E '<h1>|NOWE'
+    <h1>Raport dla Ola</h1>
+    <p class="nowe"><b>NOWE ZDANIE: szablon podmieniony w S3 bez ponownego wdrażania funkcji.</b></p>
+
+######## 3e. Odczyt szablonu z S3 – w obiekcie nadal jest {{IMIE}} ########
+
+$ lstk aws s3api head-object --bucket raport-koszykow-szablony --key template.html --query '{LastModified:LastModified,ContentType:ContentType,ETag:ETag}'
+> Note: No AWS profile found, run 'lstk setup aws'
+{
+    "LastModified": "2026-11-17T07:34:29+00:00",
+    "ContentType": "text/html; charset=utf-8",
+    "ETag": "\"656fc9df73262f51af5aef8676463569\""
+}
+
+$ lstk aws s3 cp s3://raport-koszykow-szablony/template.html - | grep -nE 'IMIE|NOWE'
+20:    <h1>Raport dla {{IMIE}}</h1>
+22:    <p class="nowe"><b>NOWE ZDANIE: szablon podmieniony w S3 bez ponownego wdrażania funkcji.</b></p>
+
+######## Sprzątanie (opcjonalnie, po oddaniu) ########
+$ docker compose down
